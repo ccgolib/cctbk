@@ -200,6 +200,34 @@ func (e *EsSearch) QueryEsLikeSearch(req *EsRequest) *EsReturnData {
 	return out
 }
 
+// es单条件查询
+func (e *EsSearch) QueryEsByOneCondition(req *EsRequest) *EsReturnData {
+	out := new(EsReturnData)
+	if len(req.Name) < 1 || len(req.Keyword) < 1 {
+		out.Code = 400
+		out.Msg = "参数缺失"
+		return out
+	}
+
+	client := e.GetNewEsClient()
+	// B、es参数拼接
+	q := elastic.NewQueryStringQuery(req.Name+":"+req.Keyword)
+	search := client.Search(esTbIndex, esJdIndex, esPddIndex).Query(q).MinScore(1)
+	allEsIndexStr := esTbIndex + "," + esJdIndex + "," + esPddIndex
+	if strings.Count(allEsIndexStr, req.EsIndex) == 1 { // 单独查询
+		search = client.Search(req.EsIndex).Query(q).MinScore(1)
+	}
+
+	res, err := search.Do(context.Background())
+	if err != nil {
+		out.Code = 400
+		out.Msg = "查询出错了"
+		return out
+	}
+	
+	return formatEs(res)
+}
+
 // 格式化es数据
 func formatEs(res *elastic.SearchResult) *EsReturnData {
 	esData := new(EsReturnData)
@@ -223,6 +251,7 @@ type EsRequest struct {
 	MaxPrice  string
 	EsIndex   string
 	Recommend int
+	Name     string
 }
 
 // es通用数据结构
