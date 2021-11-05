@@ -45,7 +45,7 @@ func (e *EsSearch) GetNewEsClient() *elastic.Client{
 }
 
 // es搜索条件统一处理
-func (e *EsSearch) QueryEsSearch(keyword string, sort string, from int, size int, minPrice string, maxPrice string, esIndex string, recommend int) *EsReturnData {
+func (e *EsSearch) QueryEsSearch(req *EsRequest) *EsReturnData {
 	out := new(EsReturnData)
 	outRecommend := new(EsReturnData)
 
@@ -57,15 +57,15 @@ func (e *EsSearch) QueryEsSearch(keyword string, sort string, from int, size int
 		defer func() {
 			wgEsSearch.Done()
 		}()
-		out = e.QuerySearch(keyword, sort, from, size, minPrice, maxPrice, esIndex)
+		out = e.QuerySearch(req)
 	}()
 	// 推荐，模糊匹配
 	go func() {
 		defer func() {
 			wgEsSearch.Done()
 		}()
-		if recommend == 0 {
-			outRecommend = e.QueryEsLikeSearch(keyword, sort, from, size, minPrice, maxPrice, esIndex)
+		if req.Recommend == 0 {
+			outRecommend = e.QueryEsLikeSearch(req)
 		}
 	}()
 	wgEsSearch.Wait()
@@ -77,42 +77,42 @@ func (e *EsSearch) QueryEsSearch(keyword string, sort string, from int, size int
 }
 
 // es精准匹配
-func (e *EsSearch) QuerySearch(keyword string, sort string, from int, size int, minPrice string, maxPrice string, esIndex string) *EsReturnData {
+func (e *EsSearch) QuerySearch(req *EsRequest) *EsReturnData {
 	out := new(EsReturnData)
 	client := e.GetNewEsClient()
 
 	// A、参数处理
-	if len(strings.ReplaceAll(keyword, " ", "")) < 1 {
+	if len(strings.ReplaceAll(req.Keyword, " ", "")) < 1 {
 		out.Code = 400
 		out.Msg = "搜索词缺失"
 		return out
 	}
-	if from < 1 {
-		from = 1
+	if req.From < 1 {
+		req.From = 1
 	}
-	if size < 1 || size > 50 {
-		size = 10
+	if req.Size < 1 || req.Size > 50 {
+		req.Size = 10
 	}
 
 	// B、es参数拼接
 	q := elastic.NewBoolQuery()
-	keywords := strings.Split(keyword, " ")
+	keywords := strings.Split(req.Keyword, " ")
 	for _, kw := range keywords {
 		q.Must(elastic.NewMatchPhraseQuery("title", kw))
 	}
-	if len(maxPrice) > 0 { // 价格区间
-		fmt.Println("price-", minPrice, maxPrice)
-		q.Must(elastic.NewRangeQuery("price_end").Gt(minPrice).Lte(maxPrice))
+	if len(req.MaxPrice) > 0 { // 价格区间
+		fmt.Println("price-", req.MinPrice, req.MaxPrice)
+		q.Must(elastic.NewRangeQuery("price_end").Gt(req.MinPrice).Lte(req.MaxPrice))
 	}
 
 	search := client.Search(esTbIndex, esJdIndex, esPddIndex).Query(q).MinScore(1)
 	allEsIndexStr := esTbIndex + "," + esJdIndex + "," + esPddIndex
-	if strings.Count(allEsIndexStr, esIndex) == 1 { // 单独查询
-		search = client.Search(esIndex).Query(q).MinScore(1)
+	if strings.Count(allEsIndexStr, req.EsIndex) == 1 { // 单独查询
+		search = client.Search(req.EsIndex).Query(q).MinScore(1)
 	}
 
 	// "排序方式: 默认：销量降序 10-升序 ，1.券后价排序;2.券面额排序;3.佣金排序;4.佣金率排序;"
-	switch sort {
+	switch req.Sort {
 	case "1":
 		search.SortBy(elastic.NewFieldSort("price_end").Desc(), elastic.NewScoreSort())
 	case "11":
@@ -135,66 +135,66 @@ func (e *EsSearch) QuerySearch(keyword string, sort string, from int, size int, 
 		search.SortBy(elastic.NewFieldSort("total_sale").Desc(), elastic.NewScoreSort())
 	}
 
-	res, err := search.From(from).Size(size).Do(context.Background())
+	res, err := search.From(req.From).Size(req.Size).Do(context.Background())
 	if err != nil {
 		out.Code = 400
 		out.Msg = "查询出错了"
 		return out
 	}
 	out = formatEs(res)
-	out.TotalPage = cast.ToInt(math.Ceil(cast.ToFloat64(cast.ToInt(out.Total) / size)))
-	out.From = from
-	out.Size = size
+	out.TotalPage = cast.ToInt(math.Ceil(cast.ToFloat64(cast.ToInt(out.Total) / req.Size)))
+	out.From = req.From
+	out.Size = req.Size
 
 	return out
 }
 
 // es模糊查询
-func (e *EsSearch) QueryEsLikeSearch(keyword string, sort string, from int, size int, minPrice string, maxPrice string, esIndex string) *EsReturnData {
+func (e *EsSearch) QueryEsLikeSearch(req *EsRequest) *EsReturnData {
 	out := new(EsReturnData)
 	client := e.GetNewEsClient()
 
 	// A、参数处理
-	if len(strings.ReplaceAll(keyword, " ", "")) < 1 {
+	if len(strings.ReplaceAll(req.Keyword, " ", "")) < 1 {
 		out.Code = 400
 		out.Msg = "搜索词缺失"
 		return out
 	}
-	if from < 1 {
-		from = 1
+	if req.From < 1 {
+		req.From = 1
 	}
-	if size < 1 || size > 50 {
-		size = 10
+	if req.Size < 1 || req.Size > 50 {
+		req.Size = 10
 	}
 
 	// B、es参数拼接
 	q := elastic.NewBoolQuery()
 	q.Should(
-		elastic.NewMatchQuery("title", keyword),
+		elastic.NewMatchQuery("title", req.Keyword),
 	)
-	if len(maxPrice) > 0 { // 价格区间
-		q.Must(elastic.NewRangeQuery("price_end").Gt(minPrice).Lte(maxPrice))
+	if len(req.MaxPrice) > 0 { // 价格区间
+		q.Must(elastic.NewRangeQuery("price_end").Gt(req.MinPrice).Lte(req.MaxPrice))
 	}
 
 	search := client.Search(esTbIndex, esJdIndex, esPddIndex).Query(q).MinScore(1)
 	allEsIndexStr := esTbIndex + "," + esJdIndex + "," + esPddIndex
-	if strings.Count(allEsIndexStr, esIndex) == 1 { // 单独查询
-		search = client.Search(esIndex).Query(q).MinScore(1)
+	if strings.Count(allEsIndexStr, req.EsIndex) == 1 { // 单独查询
+		search = client.Search(req.EsIndex).Query(q).MinScore(1)
 	}
 
 	// 排序只用score,其他排序会影响结果
 	search.SortBy(elastic.NewScoreSort())
 
-	res, err := search.From(from).Size(size).Do(context.Background())
+	res, err := search.From(req.From).Size(req.Size).Do(context.Background())
 	if err != nil {
 		out.Code = 400
 		out.Msg = "查询出错了"
 		return out
 	}
 	out = formatEs(res)
-	out.TotalPage = cast.ToInt(math.Ceil(cast.ToFloat64(cast.ToInt(out.Total) / size)))
-	out.From = from
-	out.Size = size
+	out.TotalPage = cast.ToInt(math.Ceil(cast.ToFloat64(cast.ToInt(out.Total) / req.Size)))
+	out.From = req.From
+	out.Size = req.Size
 	out.IsRecommend = 1
 
 	return out
@@ -211,6 +211,18 @@ func formatEs(res *elastic.SearchResult) *EsReturnData {
 	esData.Total = res.Hits.TotalHits.Value
 
 	return esData
+}
+
+// es入参
+type EsRequest struct {
+	Keyword   string
+	Sort      string
+	From      int
+	Size      int
+	MinPrice  string
+	MaxPrice  string
+	EsIndex   string
+	Recommend int
 }
 
 // es通用数据结构
