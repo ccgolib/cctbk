@@ -16,37 +16,36 @@ var (
 	esJdIndex  string = "tbk_jd"
 	esPddIndex string = "tbk_pdd"
 	esType     string = "goods"
-	client     *elastic.Client
 )
 
-type EsSearchConfig struct {
-	Host string
-	AuthName string
+type EsSearch struct {
+	Host         string
+	AuthName     string
 	AuthPassword string
+	client       *elastic.Client
 }
 
-//初始化
-func init() {
-	var config EsSearchConfig
+// es连接
+func (e *EsSearch) GetNewEsClient() *elastic.Client{
 	// 创建ES client用于后续操作ES,
-	esClient, err := elastic.NewClient(
+	client, err := elastic.NewClient(
 		// 关闭 sniffing 模式被启用（默认启用
 		elastic.SetSniff(false),
 		// 设置ES服务地址，支持多个地址
-		elastic.SetURL(config.Host),
+		elastic.SetURL(e.Host),
 		// 设置基于http base auth验证的账号和密码
-		elastic.SetBasicAuth(config.AuthName, config.AuthPassword),
+		elastic.SetBasicAuth(e.AuthName, e.AuthPassword),
 		// 启用gzip压缩
 		elastic.SetGzip(true),
 	)
 	if err != nil {
 		panic(err)
 	}
-	client = esClient
+	return client
 }
 
 // es搜索条件统一处理
-func QueryEsSearch(keyword string, sort string, from int, size int, minPrice string, maxPrice string, esIndex string, recommend int) *EsReturnData {
+func (e *EsSearch) QueryEsSearch(keyword string, sort string, from int, size int, minPrice string, maxPrice string, esIndex string, recommend int) *EsReturnData {
 	out := new(EsReturnData)
 	outRecommend := new(EsReturnData)
 
@@ -58,7 +57,7 @@ func QueryEsSearch(keyword string, sort string, from int, size int, minPrice str
 		defer func() {
 			wgEsSearch.Done()
 		}()
-		out = QuerySearch(keyword, sort, from, size, minPrice, maxPrice, esIndex)
+		out = e.QuerySearch(keyword, sort, from, size, minPrice, maxPrice, esIndex)
 	}()
 	// 推荐，模糊匹配
 	go func() {
@@ -66,7 +65,7 @@ func QueryEsSearch(keyword string, sort string, from int, size int, minPrice str
 			wgEsSearch.Done()
 		}()
 		if recommend == 0 {
-			outRecommend = QueryEsLikeSearch(keyword, sort, from, size, minPrice, maxPrice, esIndex)
+			outRecommend = e.QueryEsLikeSearch(keyword, sort, from, size, minPrice, maxPrice, esIndex)
 		}
 	}()
 	wgEsSearch.Wait()
@@ -78,8 +77,9 @@ func QueryEsSearch(keyword string, sort string, from int, size int, minPrice str
 }
 
 // es精准匹配
-func QuerySearch(keyword string, sort string, from int, size int, minPrice string, maxPrice string, esIndex string) *EsReturnData {
+func (e *EsSearch) QuerySearch(keyword string, sort string, from int, size int, minPrice string, maxPrice string, esIndex string) *EsReturnData {
 	out := new(EsReturnData)
+	client := e.GetNewEsClient()
 
 	// A、参数处理
 	if len(strings.ReplaceAll(keyword, " ", "")) < 1 {
@@ -150,8 +150,9 @@ func QuerySearch(keyword string, sort string, from int, size int, minPrice strin
 }
 
 // es模糊查询
-func QueryEsLikeSearch(keyword string, sort string, from int, size int, minPrice string, maxPrice string, esIndex string) *EsReturnData {
+func (e *EsSearch) QueryEsLikeSearch(keyword string, sort string, from int, size int, minPrice string, maxPrice string, esIndex string) *EsReturnData {
 	out := new(EsReturnData)
+	client := e.GetNewEsClient()
 
 	// A、参数处理
 	if len(strings.ReplaceAll(keyword, " ", "")) < 1 {
@@ -211,7 +212,6 @@ func formatEs(res *elastic.SearchResult) *EsReturnData {
 
 	return esData
 }
-
 
 // es通用数据结构
 type CommonEsData struct {
